@@ -1095,7 +1095,7 @@ class YamlSituationDefinitionProviderTest {
         var stateStore = new InMemoryGanglionStateStore();
 
         var registry = new SituationDefinitionRegistry(
-                java.util.List.of(provider), java.util.List.of(), engines, stateStore, null);
+                java.util.List.of(provider), java.util.List.of(), engines, stateStore, null, null);
 
         assertThat(registry.ganglion("e2e-bayes")).isNotNull();
         assertThat(registry.ganglion("e2e-bayes")).isInstanceOf(NaiveBayesGanglion.class);
@@ -1276,7 +1276,7 @@ class YamlSituationDefinitionProviderTest {
         var engines = new io.casehub.platform.expression.DefaultExpressionEngineRegistry();
         engines.register(new io.casehub.platform.expression.JQExpressionEngine());
         var registry = new SituationDefinitionRegistry(
-                java.util.List.of(provider), java.util.List.of(), engines, new InMemoryGanglionStateStore(), null);
+                java.util.List.of(provider), java.util.List.of(), engines, new InMemoryGanglionStateStore(), null, null);
 
         var event = io.cloudevents.core.builder.CloudEventBuilder.v1()
                                                                  .withId("e2e-1").withSource(java.net.URI.create("/test")).withType("test.e2e")
@@ -1303,7 +1303,7 @@ class YamlSituationDefinitionProviderTest {
         var engines = new io.casehub.platform.expression.DefaultExpressionEngineRegistry();
         engines.register(new io.casehub.platform.expression.JQExpressionEngine());
         var registry = new SituationDefinitionRegistry(
-                java.util.List.of(provider), java.util.List.of(), engines, new InMemoryGanglionStateStore(), null);
+                java.util.List.of(provider), java.util.List.of(), engines, new InMemoryGanglionStateStore(), null, null);
 
         var event = io.cloudevents.core.builder.CloudEventBuilder.v1()
                                                                  .withId("e2e-1").withSource(java.net.URI.create("/test")).withType("test.e2e")
