@@ -46,6 +46,7 @@ Multiple ganglia, one RAS per deployment context.
 - Retire reactive (Mutiny): `docs/superpowers/specs/2026-07-23-retire-reactive-design.md`
 - Dynamic confidence expressions: `docs/superpowers/specs/2026-07-23-dynamic-confidence-expressions-design.md`
 - Passive observation query service: `docs/superpowers/specs/2026-07-29-passive-observation-query-service-design.md`
+- RAS feedback loop: `docs/superpowers/specs/2026-08-06-ras-feedback-loop-design.md`
 
 ## Platform Docs
 - [Platform Index](https://raw.githubusercontent.com/casehubio/parent/main/docs/INDEX.md) — discovery index (start here)
