@@ -172,6 +172,11 @@ public class SituationDefinitionRegistry implements io.casehub.ras.api.Situation
         return descriptorsById.get(ganglionId);
     }
 
+    public io.casehub.ras.api.SituationDefinition definition(String situationId) {
+        SituationRegistration reg = snapshot.bySituationId().get(situationId);
+        return reg != null ? reg.definition() : null;
+    }
+
 
     public List<SituationRegistration> findByEventType(String eventType) {
         return snapshot.byEventType().getOrDefault(eventType, List.of());
