@@ -77,6 +77,27 @@ Expression compilation: `StringExpressionEvaluator` instances (`JQExpressionEval
 3. **Orphaned resource cleanup** — iterates all `OrphanedResourceCleaner` CDI beans, calls `removeOrphaned()`. Errors logged and skipped per cleaner.
 4. **Event history cleanup** — if `SituationEventRetention` is available, calls `removeEventsBefore(cutoff)` with `ras.event-history.retention` (default P30D).
 
+### Feedback Loop — Sense-Decide-Act-Learn
+
+Three-layer architecture: ingestion, analysis, application. All feedback state is tenant-scoped.
+
+**Ingestion:** `OutcomeRecorder` implements `CaseOutcomeObserver` (from `casehub-engine-api`). Extracts `situationId`, `correlationKey` from `CaseOutcomeEvent.caseFileSnapshot()` (populated by `DefaultCaseTrigger`). Classifies outcome via `FeedbackConfig.classify()` and records to `OutcomeLedger`. Errors swallowed (best-effort).
+
+**Analysis:** `FeedbackAnalyzer` queries `OutcomeLedger.statistics()` within the retention window. Returns `OutcomeStatistics` with `precision()`, `noiseRate()`.
+
+**Application:** `FeedbackUpdateJob` (`@Scheduled(every = "${ras.feedback.update-interval:PT5M}")`). Per situation with feedback config, per tenant:
+1. Records metrics via `FeedbackMetrics` (precision, noise rate, outcome totals)
+2. If `tuningEnabled`:
+   - **Threshold adjustment** — for `ChainMode.Threshold` situations, calls `FeedbackTuningStrategy.adjustThreshold()` and applies via `FeedbackState.applyThresholdOverride()`. `SituationEvaluator` uses `FeedbackState.effectiveThreshold()` to construct an adjusted `ChainMode.Threshold` before policy evaluation.
+   - **Prior recalibration** — for NaiveBayes ganglia with `outcomeGroundTruth`, maps case outcome labels to NaiveBayes outcome indices, calls `FeedbackTuningStrategy.adjustPriors()` (Laplace-smoothed blend), applies via `FeedbackState.applyPriorOverride()` (converts raw→log at the boundary). `NaiveBayesGanglion` uses `FeedbackState.adjustedLogPriors()` as initial priors for new situation instances.
+3. Runs retention cleanup via `OutcomeLedger.removeRecordsBefore()`
+
+**Suppression** (always active, even without tuning): `SituationEvaluator` checks `SuppressionStrategy.shouldSuppress()` before detection. `DefaultSuppressionStrategy` suppresses when the correlation key's last noise dismissal is within `suppressionCooldown`. Metric: `ras.feedback.suppressions_total`.
+
+**FeedbackState** — `@ApplicationScoped`, two `ConcurrentHashMap` maps keyed by `(id, tenancyId)`. Holds threshold overrides and log-space prior overrides. `DefaultRasTriggerPolicy` is NOT modified — purity preserved.
+
+**Strategy SPIs** — `SuppressionStrategy` and `FeedbackTuningStrategy` are pluggable. Default implementations are `@DefaultBean`.
+
 ---
 
 ## Full Module Details
@@ -85,17 +106,17 @@ Expression compilation: `StringExpressionEvaluator` instances (`JQExpressionEval
 
 Core SPIs and domain types.
 
-**SPIs:** `Ganglion`, `SituationStore`, `GanglionStateStore`, `CaseTrigger`, `RasTriggerPolicy`, `CaseInputContributor`, `OrphanedResourceCleaner`, `EventFilter`, `CorrelationKeyExtractor`, `SituationDefinitionProvider`, `SituationQueryService`, `SituationSource`, `SituationEventRetention`.
+**SPIs:** `Ganglion`, `SituationStore`, `GanglionStateStore`, `CaseTrigger`, `RasTriggerPolicy`, `CaseInputContributor`, `OrphanedResourceCleaner`, `EventFilter`, `CorrelationKeyExtractor`, `SituationDefinitionProvider`, `SituationQueryService`, `SituationSource`, `SituationEventRetention`, `OutcomeLedger`, `SuppressionStrategy`, `FeedbackTuningStrategy`.
 
-**Records:** `SituationDefinition`, `SituationContext`, `SituationRegistration`, `DetectionResult`, `CaseTriggerConfig`, `GanglionState`, `GanglionStateKey`, `ActiveSituation`, `SituationChangeEvent`, `SituationEvent`, `PolicyDecision`, `TrendResult`, `TenantHealth`, `SituationSummary`, `TimestampedDetection`.
+**Records:** `SituationDefinition`, `SituationContext`, `SituationRegistration`, `DetectionResult`, `CaseTriggerConfig`, `GanglionState`, `GanglionStateKey`, `ActiveSituation`, `SituationChangeEvent`, `SituationEvent`, `PolicyDecision`, `TrendResult`, `TenantHealth`, `SituationSummary`, `TimestampedDetection`, `FeedbackConfig`, `OutcomeRecord`, `OutcomeStatistics`.
 
 **Sealed types:** `ChainMode` (7 variants: And, Or, Threshold, Sequence, Count, Streak, Rate), `TriggerMode` (FireOnce, Repeating), `TriggerAction` (CreateCase, NotifyOnly), `GanglionDescriptor` (NaiveBayes, ExpressionRules).
 
-**Enums:** `TriggerDecision` (6 values: TRIGGER, TRIGGER_AND_CONTINUE, CONTINUE_ACCUMULATING, DISCARD, RESOLVE, SUPPRESS), `DetectionSignal` (NOISE, ANTI, WEAK, DETECTED).
+**Enums:** `TriggerDecision` (6 values: TRIGGER, TRIGGER_AND_CONTINUE, CONTINUE_ACCUMULATING, DISCARD, RESOLVE, SUPPRESS), `DetectionSignal` (NOISE, ANTI, WEAK, DETECTED), `OutcomeClassification` (NOISE, CONFIRMED, NEUTRAL).
 
 **Other:** `JavaSwitchGanglion` (abstract base class), `DefaultCorrelationKeyExtractor`, `SituationConflictException`, `GanglionStateConflictException`, `SuppressionMetadataKeys` (constants: TIER, DISMISSAL_RATE, MATCH_COUNT, AVERAGE_SIMILARITY).
 
-Depends on CloudEvents SDK, `casehub-platform-api` (for `CloudEvent`, `ExpressionEvaluator`). No CDI. Publishes test-jar with `AbstractGanglionContractTest`, `AbstractGanglionStateStoreContractTest`, `AbstractSituationStoreContractTest`, `AbstractSituationQueryServiceContractTest`.
+Depends on CloudEvents SDK, `casehub-platform-api` (for `CloudEvent`, `ExpressionEvaluator`). No CDI. Publishes test-jar with `AbstractGanglionContractTest`, `AbstractGanglionStateStoreContractTest`, `AbstractSituationStoreContractTest`, `AbstractSituationQueryServiceContractTest`, `AbstractOutcomeLedgerContractTest`.
 
 ### runtime/ — `casehub-ras`
 
@@ -128,7 +149,17 @@ CDI runtime. All beans are `@ApplicationScoped`.
 - `EventBufferFlushJob` — `@Scheduled(every = "PT1S")`, flushes idle reorder buffers.
 - `SituationExpiryJob` — `@Scheduled(every = "PT5M")`, four-phase cleanup (triggered guard, expired, orphans, event history).
 - `InMemoryGanglionStateStore` (`@DefaultBean`) — ConcurrentHashMap-backed. Zero config.
+- `InMemoryOutcomeLedger` (`@DefaultBean`) — ConcurrentHashMap-backed. UNIQUE(case_id) dedup via `Set<UUID>`.
 - `JqResultUnwrapper` — unwraps JQ expression results (which return `List`) into expected types.
+
+**Feedback loop beans:**
+- `OutcomeRecorder` — implements `CaseOutcomeObserver`. Extracts `situationId`/`correlationKey` from `caseFileSnapshot()`, classifies via `FeedbackConfig`, records to `OutcomeLedger`.
+- `FeedbackAnalyzer` — queries `OutcomeLedger.statistics()` within retention window.
+- `FeedbackUpdateJob` — `@Scheduled(every = "${ras.feedback.update-interval:PT5M}")`. Iterates situations with feedback config, applies tuning strategies (threshold + priors), runs retention cleanup.
+- `FeedbackState` — `@ApplicationScoped`. Two `ConcurrentHashMap` maps for threshold and log-space prior overrides, keyed by `(id, tenancyId)`.
+- `FeedbackMetrics` — Micrometer gauges for precision, noise rate, outcomes total; counters for threshold/prior adjustments and retention cleanup.
+- `DefaultSuppressionStrategy` (`@DefaultBean`) — suppresses within cooldown period.
+- `DefaultTuningStrategy` (`@DefaultBean`) — noise-rate-driven threshold shift (min 10 outcomes), Laplace-smoothed prior blend (min 5 outcomes).
 
 `casehub-platform-expression` at test scope only — deployers add it to classpath when expressions are needed. Quarkus extension.
 
@@ -149,13 +180,18 @@ Production persistence. All beans activate by classpath presence (CDI priority w
 - `GanglionStateEntity` — JPA entity, table `ras_ganglion_state`. Composite key: `(ganglionId, situationId, correlationKey, tenancyId)`. JSONB `stateValues`, `@Version`.
 - `SituationMapper` — maps between JPA entities and API records.
 
-Flyway migrations V1-V6:
+Flyway migrations V1-V7:
 - V1: `ras_situation` table
 - V2: `version` column (JPA `@Version`)
 - V3: `policy_triggered` column
 - V4: trigger lifecycle columns (`last_triggered`, `trigger_count`)
 - V5: `ras_ganglion_state` table
 - V6: `ras_situation_event` table
+- V7: `ras_outcome_record` table (feedback loop)
+
+**Feedback persistence:**
+- `JpaOutcomeLedger` — `@ApplicationScoped`, `OutcomeLedger` impl. Native `INSERT ON CONFLICT (case_id) DO NOTHING` for idempotent recording. JPQL for typed queries (`lastNoiseDismissalTime`), native SQL for aggregates and cleanup.
+- `OutcomeRecordEntity` — JPA entity, table `ras_outcome_record`. `UNIQUE(case_id)`, `classification` stored as `VARCHAR` via `@Enumerated(EnumType.STRING)`. Indexed for tenant+situation and suppression lookups.
 
 Consumers add `classpath:db/ras/migration` to `quarkus.flyway.locations`.
 
