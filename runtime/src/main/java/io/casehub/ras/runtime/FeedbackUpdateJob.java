@@ -44,7 +44,8 @@ public class FeedbackUpdateJob {
         this.feedbackMetrics = feedbackMetrics;
     }
 
-    @Scheduled(every = "${ras.feedback.update-interval:PT5M}")
+    @Scheduled(every = "${ras.feedback.update-interval:PT5M}",
+               concurrentExecution = io.quarkus.scheduler.Scheduled.ConcurrentExecution.SKIP)
     public void updateFeedback() {
         for (String situationId : registry.allSituationIds()) {
             try {
