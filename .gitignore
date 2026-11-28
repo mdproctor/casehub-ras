@@ -59,4 +59,8 @@ hs_err_pid*
 package-lock.json
 wksp
 proj
-
+.mvn/maven.config
+.mvn/slot-settings.xml
+.worktrees
+.worktrees/
+.claude/
