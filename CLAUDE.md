@@ -414,6 +414,6 @@ Protocols live in `casehub/garden`. Do not write protocol files in this repo.
 
 ## Workspace
 
-**Project repo:** `/Users/mdproctor/claude/casehub/ras`
+**Project repo:** `/Users/mdproctor/claude/casehub/slots/232/ras`
 **Workspace:** `/Users/mdproctor/claude/public/casehub-ras`
 **Workspace type:** public
